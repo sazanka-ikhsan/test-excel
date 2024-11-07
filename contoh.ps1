@@ -1,33 +1,96 @@
-# Create a new Excel Application COM object
-$excel = New-Object -ComObject Excel.Application
-$excel.Visible = $false  # Make Excel invisible
+# Enable error handling
+$ErrorActionPreference = "Stop"
 
-# Define the path to the Excel file and the desired output PDF file
-#$excelFilePath = "C:\x\exceltopdf\sample.xlsx"  # Change this to your Excel file path
-#$pdfFilePath = "C:\x\exceltopdf\file.pdf"      # Change this to your desired PDF output path
-$excelFilePath = $args[0]
-$pdfFilePath = $args[1]
+# Log function for debugging
+function Write-Log {
+    param($Message)
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'): $Message"
+}
+
+Write-Log "Script started"
 
 try {
-    # Open the Excel file
+    # Get and validate input parameters
+    if ($args.Count -lt 2) {
+        throw "Required parameters missing. Usage: script.ps1 <excel-path> <pdf-path>"
+    }
+
+    $excelFilePath = $args[0]
+    $pdfFilePath = $args[1]
+
+    Write-Log "Excel File: $excelFilePath"
+    Write-Log "PDF Target: $pdfFilePath"
+
+    # Verify Excel file exists
+    if (-not (Test-Path $excelFilePath)) {
+        throw "Excel file not found: $excelFilePath"
+    }
+
+    # Create PDF directory if it doesn't exist
+    $pdfDirectory = Split-Path -Parent -Path $pdfFilePath
+    if (-not (Test-Path $pdfDirectory)) {
+        New-Item -ItemType Directory -Path $pdfDirectory -Force | Out-Null
+        Write-Log "Created directory: $pdfDirectory"
+    }
+
+    Write-Log "Creating Excel COM object"
+    $excel = New-Object -ComObject Excel.Application
+    $excel.Visible = $false
+    $excel.DisplayAlerts = $false
+
+    Write-Log "Opening workbook"
     $workbook = $excel.Workbooks.Open($excelFilePath)
     
-    # Loop through each sheet if needed
-    foreach ($sheet in $workbook.Sheets) {
-        # Save the workbook as PDF using the sheet's PageSetup settings
-        $sheet.ExportAsFixedFormat(0, $pdfFilePath, $false, $true)  # 0 for PDF, $false to not include document properties, $true for landscape
+    # Adjust alignment for all worksheets
+    foreach ($worksheet in $workbook.Worksheets) {
+        Write-Log "Configuring worksheet: $($worksheet.Name)"
         
-        # You might need to set the PDF filename for each sheet separately if required
-        # Example:
-        # $pdfFilePath = "C:\path\to\your\" + $sheet.Name + ".pdf"
+        # Get the used range
+        $usedRange = $worksheet.UsedRange
+        
+        # Set vertical alignment to top for used range
+        $usedRange.VerticalAlignment = -4160  # xlTop
+        
+        # Configure page setup
+        $worksheet.PageSetup.CenterHorizontally = $true
+        $worksheet.PageSetup.CenterVertically = $false
+        
+        # Adjust margins (in points)
+        $worksheet.PageSetup.TopMargin = 20
+        $worksheet.PageSetup.BottomMargin = 20
+        $worksheet.PageSetup.LeftMargin = 20
+        $worksheet.PageSetup.RightMargin = 20
+        
+        # Get the used range boundaries
+        $startCell = $usedRange.Cells(1, 1).Address($false, $false)
+        $endCell = $usedRange.Cells($usedRange.Rows.Count, $usedRange.Columns.Count).Address($false, $false)
+        
+        # Set print area
+        $printArea = "${startCell}:${endCell}"
+        Write-Log "Setting print area to: $printArea"
+        $worksheet.PageSetup.PrintArea = $printArea
     }
     
-    Write-Host "PDF created successfully: $pdfFilePath"
+    Write-Log "Converting to PDF"
+    $workbook.ExportAsFixedFormat(0, $pdfFilePath)
+    
+    Write-Log "PDF creation successful"
 } catch {
-    Write-Host "An error occurred: $_"
+    Write-Log "Error occurred: $_"
+    Write-Log "Exception details: $($_.Exception)"
+    throw
 } finally {
-    # Close the workbook and Excel application
-    $workbook.Close($false)  # Don't save changes
-    $excel.Quit()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
+    if ($workbook) {
+        Write-Log "Closing workbook"
+        $workbook.Close($false)
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbook) | Out-Null
+    }
+    if ($excel) {
+        Write-Log "Quitting Excel"
+        $excel.Quit()
+        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
+    }
+    Write-Log "Cleanup complete"
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
 }
